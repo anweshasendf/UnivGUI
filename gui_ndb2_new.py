@@ -18,6 +18,8 @@ from PyQt5.QtWidgets import QHeaderView
 from PyQt5.QtWidgets import QVBoxLayout, QWidget, QScrollArea, QLabel, QFrame
 from PyQt5.QtCore import Qt
 from reportlab.lib.utils import ImageReader
+import numpy as np
+from statsmodels.tsa.arima.model import ARIMA
 import PyPDF2
 import logger
 from pdf2image import convert_from_path
@@ -31,6 +33,7 @@ from reportlab.platypus import PageBreak
 import io
 from PyQt5.QtWidgets import QApplication
 import os
+from pyqtgraph import PlotWidget
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem, QFileDialog, QTabWidget, QMessageBox
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import QProgressDialog
@@ -460,10 +463,20 @@ class PDFGeneratorWorker(QObject):
             
             if self.logo_path:
                 pdf_gen.add_image(self.logo_path, "Company Logo")
+                
+            if 'results_path' in self.data:
+                self.add_results_content_ndb(pdf_gen, self.data['results_path'])
+            elif 'tables' in self.data:
+                # If 'results_path' is not available, use the data from 'tables'
+                self.add_results_content_ndb_from_tables(pdf_gen, self.data['tables'])
+            else:
+                pdf_gen.add_paragraph("No results data available.")
 
-            self.add_results_content_ndb(pdf_gen, self.data['results_path'])
+
+            #self.add_results_content_ndb(pdf_gen, self.data['results_path'])
             self.add_plots_content_ndb(pdf_gen, os.path.join(self.data['folder_path'], "results"))
             self.add_general_plots_content_ndb(pdf_gen, self.data['results_path'])
+            self.add_results_content_ndb_from_tables(pdf_gen,self.data['tables'])
             
             logging.info("Neutral Deadband PDF content added successfully")
         except Exception as e:
@@ -471,7 +484,7 @@ class PDFGeneratorWorker(QObject):
             logging.error(traceback.format_exc())
             raise
         
-    def add_results_content_ndb(self, pdf_gen, results_path):
+    def add_results_content_ndb(self, pdf_gen, results_path, tables_data):
         try:
             if os.path.exists(results_path):
                 df = pd.read_csv(results_path)
@@ -487,6 +500,26 @@ class PDFGeneratorWorker(QObject):
         except Exception as e:
             logging.error(f"Error adding results content: {str(e)}")
             pdf_gen.add_paragraph(f"Error adding results content: {str(e)}")
+            
+    def add_results_content_ndb_from_tables(self, pdf_gen, tables_data):
+        pdf_gen.add_heading("Test Results")
+        
+        for table_name, table_data in tables_data.items():
+            if table_name.startswith("Merged Data"):
+                continue  # Skip merged data tables
+            
+            pdf_gen.add_heading(f"Results for {table_name}", level=2)
+            
+            headers = table_data['columns']
+            data = table_data['data']
+            
+            
+            table_data = [headers] + data
+            
+            # Add the table to the PDF
+            pdf_gen.add_table(table_data)
+            
+            pdf_gen.add_paragraph("")
 
     def add_plots_content_ndb(self, pdf_gen, results_folder):
         try:
@@ -1994,6 +2027,7 @@ class DisplayWindow(QMainWindow):
         self.create_comparison_tab()
         self.create_help_tab()
         #self.create_extraplots_tab()
+        self.create_anomalies_tab()
         
         
     
@@ -2545,9 +2579,9 @@ class DisplayWindow(QMainWindow):
                             ha='center', va='bottom')
                 
                 # Add value labels to the side
-                ax.text(1.05, original_value, f'Original: {original_value:.2f}', 
+                ax.text(1.00, original_value, f'Original: {original_value:.2f}', 
                         va='center', ha='left', transform=ax.get_yaxis_transform())
-                ax.text(1.05, new_value, f'New: {new_value:.2f}', 
+                ax.text(1.00, new_value, f'New: {new_value:.2f}', 
                         va='center', ha='left', transform=ax.get_yaxis_transform())
             else:
                 # Line plot for multiple values
@@ -2590,6 +2624,47 @@ class DisplayWindow(QMainWindow):
 
         # Add some vertical spacing after each file comparison
         layout.addSpacing(20)
+        
+        
+    def create_anomalies_tab(self):
+        anomalies_tab = QWidget()
+        anomalies_layout = QVBoxLayout(anomalies_tab)
+
+        self.anomalies_table = QTableWidget()
+        self.anomalies_layout.addWidget(self.anomalies_table)
+
+        self.anomalies_plot = PlotWidget()
+        self.anomalies_layout.addWidget(self.anomalies_plot)
+
+        self.tab_widget.addTab(anomalies_tab, "Anomalies")
+
+    def populate_anomalies_tab(self):
+        # Populate the anomalies table
+        for file_name, table_data in self.data['tables'].items():
+            if file_name.startswith('Anomalies_ARIMA_'):
+                self.populate_anomalies_table(file_name, table_data)
+                self.plot_anomalies(file_name, table_data)
+                break  # Assuming we're only showing one file's anomalies at a time
+
+    def populate_anomalies_table(self, file_name, table_data):
+        self.anomalies_table.setColumnCount(len(table_data['columns']))
+        self.anomalies_table.setHorizontalHeaderLabels(table_data['columns'])
+        self.anomalies_table.setRowCount(len(table_data['data']))
+
+        for row, row_data in enumerate(table_data['data']):
+            for col, value in enumerate(row_data):
+                self.anomalies_table.setItem(row, col, QTableWidgetItem(str(value)))
+
+    def plot_anomalies(self, file_name, table_data):
+        # Assuming 'Time' and 'HST_output_RPM' are columns in your data
+        time = [row[table_data['columns'].index('Time')] for row in table_data['data']]
+        rpm = [row[table_data['columns'].index('HST_output_RPM')] for row in table_data['data']]
+
+        self.anomalies_plot.clear()
+        self.anomalies_plot.plot(time, rpm, pen='b', symbol='o', symbolPen='b', symbolBrush='b', symbolSize=5)
+        self.anomalies_plot.setLabel('left', 'HST Output RPM')
+        self.anomalies_plot.setLabel('bottom', 'Time')
+        self.anomalies_plot.setTitle(f'ARIMA Anomalies - {file_name}')
 
             
     def create_script_results_tabs(self):
