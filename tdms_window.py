@@ -234,13 +234,19 @@ class UploadWindow(QMainWindow):
             self.previous_window.update_tdms_file_count(folder_path)
             self.upload_completed.emit(folder_path)
             self.close()
-            script_path = r"pcr_rr_new.py" if self.selected_option == "PC RR" else r"piston_group.py"
+            #script_path = r"pcr_rr_new.py" if self.selected_option == "PC RR" else r"piston_group.py"
 
+            if self.selected_option == "PC RR":
+                script_path = r"pcr_rr_new.py"
+            elif self.selected_option == "PC Speed Sweep":
+                script_path = r"pc_ss.py"
+            else:
+                script_path = r"piston_group.py"
+            
             self.script_upload_window = ScriptUploadWindow(folder_path, script_path, previous_window=self, selected_option=self.selected_option)
 
             self.script_upload_window.show()
-            #self.script_upload_window = ScriptUploadWindow(folder_path, previous_window=self)
-            #self.script_upload_window.show()
+         
 
     def go_to_previous_window(self):
         self.close()
@@ -282,7 +288,14 @@ class CoupledUploadWindow(QMainWindow):
             self.close()
             
             # Determine which script to run based on the selected option
-            script_path = r"pcr_rr_new.py" if self.selected_option == "PC RR" else r"piston_group.py"
+            #script_path = r"pcr_rr_new.py" if self.selected_option == "PC RR" else r"piston_group.py"
+            
+            if self.selected_option == "PC RR":
+                script_path = r"pcr_rr_new.py"
+            elif self.selected_option == "PC Speed Sweep":
+                script_path = r"pc_ss.py"
+            else:
+                script_path = r"piston_group.py"
 
             self.script_upload_window = ScriptUploadWindow(folder_path, script_path, previous_window=self, selected_option=self.selected_option)
             self.script_upload_window.show()

@@ -287,38 +287,7 @@ class OptionWindow(QMainWindow):
         self.set_background_image(r"Danfoss_BG.png")
         super().resizeEvent(event)
         
-    # def set_logo(self):
-    #     try:
-    #         logo_path = os.path.join(os.path.dirname(__file__), "Danfoss_Logo.png")
-    #         if not os.path.exists(logo_path):
-    #             print(f"Logo file not found at {logo_path}")
-    #             return
-
-    #         logo_label = QLabel()
-    #         pixmap = QPixmap(logo_path)
-    #         if pixmap.isNull():
-    #             print("Failed to load the logo image")
-    #             return
-
-    #         scaled_pixmap = pixmap.scaled(200, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-    #         logo_label.setPixmap(scaled_pixmap)
-    #         logo_label.setStyleSheet("background-color: transparent;")
-    #         logo_label.setFixedSize(200, 100) 
-            
-            
-    #         logo_container = QWidget()
-    #         logo_container.setFixedSize(self.width(), 120)  
-    #         logo_layout = QHBoxLayout(logo_container)
-    #         logo_layout.addWidget(logo_label, alignment=Qt.AlignTop | Qt.AlignLeft)
-    #         logo_layout.setContentsMargins(20, 20, 0, 0)  # Add some margin to position the logo
-            
-    #         # Insert the logo container at the top of the main layout
-    #         self.layout.insertWidget(0, logo_container)
-            
-    #         print(f"Logo set successfully from {logo_path}")
-    #         print(f"Logo size: {logo_label.size()}")
-    #     except Exception as e:
-    #         print(f"Error setting logo: {str(e)}")
+ 
     
     def set_left_logo(self):
         try:

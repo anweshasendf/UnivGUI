@@ -56,8 +56,9 @@ class EfficiencyWindow(QMainWindow):
         self.setPalette(palette)
         
     def select_option(self, option):
+        self.selected_option = option
         self.option_selected.emit(option)
-        self.close()
+        self.open_upload_window(option)
 
     def resizeEvent(self, event):
         self.set_background_image(r"Danfoss_BG.png")

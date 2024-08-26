@@ -19,6 +19,11 @@ from PyQt5.QtWidgets import QVBoxLayout, QWidget, QScrollArea, QLabel, QFrame
 from PyQt5.QtCore import Qt
 from reportlab.lib.utils import ImageReader
 import numpy as np
+import pickle
+from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import StandardScaler
+from scipy.stats import chi2
+from sklearn.covariance import MinCovDet
 from statsmodels.tsa.arima.model import ARIMA
 import PyPDF2
 import logger
@@ -33,6 +38,7 @@ from reportlab.platypus import PageBreak
 import io
 from PyQt5.QtWidgets import QApplication
 import os
+import pyqtgraph as pg
 from pyqtgraph import PlotWidget
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem, QFileDialog, QTabWidget, QMessageBox
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -72,6 +78,11 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import shutil
 from PyQt5.QtWidgets import QProgressBar
+from statsmodels.tsa.arima.model import ARIMA
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QComboBox
+from pyqtgraph import PlotWidget
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -136,6 +147,7 @@ class PDFGeneratorWorker(QObject):
             filename=self.output_path,  # Use output_path as filename
             output_path=os.path.dirname(self.output_path),
             data=self.data,
+            logo_path = self.logo_path,
             temp_dir=self.temp_dir,
             test_type=self.test_type
         )
@@ -1022,7 +1034,7 @@ class PDFGeneratorWorker(QObject):
             return None
 
 class PDFGenerator:
-    def __init__(self, filename, data, output_path, temp_dir, test_type, logo_path=None,):
+    def __init__(self, filename, data, output_path, temp_dir, test_type, text, level=1, title="", logo_path=None,):
         self.filename = filename
         self.story = []
         self.data = data
@@ -1030,9 +1042,17 @@ class PDFGenerator:
         self.doc = None 
         self.temp_dir = temp_dir
         self.elements = []
+        self.title = title
         self.test_type = test_type
         self.logo_path = logo_path
+        style = f'Heading{level}'
+        self.story.append(Paragraph(text, self.styles[style]))
+        
+
         self.styles = getSampleStyleSheet()
+        self.styles.add(ParagraphStyle(name='Heading2', fontSize=14, spaceAfter=6))
+        self.styles.add(ParagraphStyle(name='Heading3', fontSize=12, spaceAfter=6))
+
         
         logging.info(f"  output_path: {self.output_path}")
         logging.info(f"  data keys: {self.data.keys()}")
@@ -1951,6 +1971,7 @@ class UnitDisplayWindow(QMainWindow):
                 raw_data=self.folder_path,
                 folder_path=self.folder_path,
                 previous_window=self,
+                #og_df= self.og_df,
                 parameters=self.parameters
             )
         self.display_window.show()
@@ -1985,8 +2006,31 @@ class DisplayWindow(QMainWindow):
         self.logo_path = r"Danfoss_BG.png"  # Define the logo_path attribute
         self.parameters = parameters or {}
         self.temp_dir = tempfile.mkdtemp()
-      
         self.previous_window = previous_window
+        
+        self.anomalies = {}  # Initialize the anomalies attribute
+        self.common_anomalies = pd.DataFrame()
+        
+        try:
+            with open('processed_df.pkl', 'rb') as f:
+                self.og_df = pickle.load(f)
+            print(f"Loaded dataframe with shape: {self.og_df.shape}")
+            print(f"Columns in loaded dataframe: {self.og_df.columns}")
+        except FileNotFoundError:
+            print("Processed dataframe file not found. Please run ndb_test_new first.")
+            self.og_df = None
+        except Exception as e:
+            print(f"Error loading processed dataframe: {str(e)}")
+            self.og_df = None
+
+      
+        if self.og_df is not None:
+            try:
+                self.anomalies, self.common_anomalies = self.detect_anomalies(self.og_df)
+            except Exception as e:
+                print(f"Error in anomaly detection: {str(e)}")
+                import traceback
+                traceback.print_exc()
      
 
         print("Data received:", self.data)  # Debug print
@@ -1998,6 +2042,7 @@ class DisplayWindow(QMainWindow):
 
         self.tab_widget = QTabWidget()
         self.layout.addWidget(self.tab_widget)
+    
         
         #self.pdf_button = QPushButton("Generate New PDF")
         #self.pdf_button.clicked.connect(self.on_generate_pdf)
@@ -2067,9 +2112,7 @@ class DisplayWindow(QMainWindow):
         table1.setItem(table1.rowCount() - 1, 0, QTableWidgetItem("Plots with NDB Value"))
         table1.setItem(table1.rowCount() - 1, 1, QTableWidgetItem(f"{plots_with_ndb}/{total_plots}"))
 
-        # Check if NDB test passed
-        #ndb_values = [self.data['tables'][file_name]['data'][0][9] for file_name in self.data['tables'] if file_name in self.data['plots']]
-        #ndb_test_passed = sum(1 for ndb in ndb_values if ndb < 0) >= len(ndb_values) * 0.5
+    
         
         ndb_values = []
         for file_name, table_data in self.data['tables'].items():
@@ -2079,11 +2122,36 @@ class DisplayWindow(QMainWindow):
                 ndb_value = abs(a1 - b1)
                 ndb_values.append(ndb_value)
         
-        mean_ndb_value = sum(ndb_values) / len(ndb_values) if ndb_values else 0 #Made singular 
-        ndb_test_passed = sum(1 for ndb in ndb_values if ndb >= mean_ndb_value) >= len(ndb_values) * 0.5
-        table1.insertRow(table1.rowCount())
-        table1.setItem(table1.rowCount() - 1, 0, QTableWidgetItem(f"NDB Test Result if 50% files are above Mean NDB ({mean_ndb_value:.2f})"))
-        table1.setItem(table1.rowCount() - 1, 1, QTableWidgetItem("Passed" if ndb_test_passed else "Failed"))
+        # mean_ndb_value = sum(ndb_values) / len(ndb_values) if ndb_values else 0 #Made singular 
+        # ndb_test_passed = sum(1 for ndb in ndb_values if ndb >= mean_ndb_value) >= len(ndb_values) * 0.5
+        # table1.insertRow(table1.rowCount())
+        # table1.setItem(table1.rowCount() - 1, 0, QTableWidgetItem(f"NDB Test Result if 50% files are above Mean NDB ({mean_ndb_value:.2f})"))
+        # table1.setItem(table1.rowCount() - 1, 1, QTableWidgetItem("Passed" if ndb_test_passed else "Failed"))
+        
+        #Pass Fail
+        if hasattr(self, 'anomalies') and self.anomalies:
+            total_entries = sum(len(anomalies) for anomalies in self.anomalies.values())
+            total_parameters = len(self.anomalies)
+            threshold = 0.3 * total_entries  # 30% of total entries
+
+            test_passed = total_entries < threshold
+
+            table1.insertRow(table1.rowCount())
+            table1.setItem(table1.rowCount() - 1, 0, QTableWidgetItem(f"Anomaly Test (Threshold: {threshold:.0f})"))
+            table1.setItem(table1.rowCount() - 1, 1, QTableWidgetItem("Passed" if test_passed else "Failed"))
+            
+            table1.insertRow(table1.rowCount())
+            table1.setItem(table1.rowCount() - 1, 0, QTableWidgetItem("Total Anomalies"))
+            table1.setItem(table1.rowCount() - 1, 1, QTableWidgetItem(str(total_entries)))
+
+            table1.insertRow(table1.rowCount())
+            table1.setItem(table1.rowCount() - 1, 0, QTableWidgetItem("Total Parameters"))
+            table1.setItem(table1.rowCount() - 1, 1, QTableWidgetItem(str(total_parameters)))
+        else:
+            table1.insertRow(table1.rowCount())
+            table1.setItem(table1.rowCount() - 1, 0, QTableWidgetItem("Anomaly Detection"))
+            table1.setItem(table1.rowCount() - 1, 1, QTableWidgetItem("Not performed or no anomalies found"))
+
 
         table1.resizeColumnsToContents()
         table1.setMinimumSize(600, 200)  # Increase size
@@ -2581,7 +2649,11 @@ class DisplayWindow(QMainWindow):
                 # Add value labels to the side
                 ax.text(1.00, original_value, f'Original: {original_value:.2f}', 
                         va='center', ha='left', transform=ax.get_yaxis_transform())
+                ax.text(1.00, original_value - 0.05 * (ax.get_ylim()[1] - ax.get_ylim()[0]), '', 
+                        va='center', ha='left', transform=ax.get_yaxis_transform())
                 ax.text(1.00, new_value, f'New: {new_value:.2f}', 
+                        va='center', ha='left', transform=ax.get_yaxis_transform())
+                ax.text(1.00, new_value - 0.05 * (ax.get_ylim()[1] - ax.get_ylim()[0]), '', 
                         va='center', ha='left', transform=ax.get_yaxis_transform())
             else:
                 # Line plot for multiple values
@@ -2625,47 +2697,224 @@ class DisplayWindow(QMainWindow):
         # Add some vertical spacing after each file comparison
         layout.addSpacing(20)
         
+
+    def detect_anomalies(self, df):
+        print(f"Input DataFrame shape: {df.shape}")
+        print(f"Input DataFrame columns: {df.columns}")
         
+        anomalies = {}
+        common_anomalies = pd.DataFrame()
+        
+        key_columns = ['HST_output_RPM', 'Swash_Angle', 'Delta', 'HST_Case-flow_LPM', 'HST_Charge bar', 'HST_ Case bar',
+                    'HST_B-port bar', 'HST_A-Port_bar', 'HST_Input_RPM', 'HST_Input-Torque_Nm',
+                    'HST_output-Torque_Nm', 'Swash_movement_Torque_Nm', 'Inlet_temp', 'Case_temp']
+        
+        columns_to_use = [col for col in key_columns if col in df.columns]
+        
+        if len(columns_to_use) < 2:
+            print("Error: Not enough valid columns for multivariate anomaly detection")
+            return anomalies, common_anomalies
+
+        try:
+            X = df[columns_to_use].copy()
+            
+            # 1. Trend-based anomaly detection
+            window_size = 100 
+            threshold = 3  # Number of standard deviations to consider as anomaly
+            
+            for column in columns_to_use:
+                rolling_mean = X[column].rolling(window=window_size).mean()
+                rolling_std = X[column].rolling(window=window_size).std()
+                
+                z_scores = (X[column] - rolling_mean) / rolling_std
+                trend_anomalies = np.abs(z_scores) > threshold
+                
+                diff = X[column].diff()
+                sudden_changes = np.abs(diff) > diff.std() * 3
+                anomalies[f'{column}_sudden_change'] = X.loc[sudden_changes, [column]]
+                            
+                anomalies[column] = X.loc[trend_anomalies, [column]]
+                print(f"Trend-based anomalies for {column}: {trend_anomalies.sum()}")
+            
+            # 2. Multivariate outlier detection
+            robust_cov = MinCovDet().fit(X)
+            mahalanobis_dist = robust_cov.mahalanobis(X)
+            
+            # Chi-square threshold for multivariate outliers
+            threshold = chi2.ppf(0.99, df=len(columns_to_use))
+            multivariate_anomalies = mahalanobis_dist > threshold
+            
+            common_anomalies = X.loc[multivariate_anomalies]
+            print(f"Multivariate anomalies detected: {multivariate_anomalies.sum()}")
+            
+            # Combine trend-based and multivariate anomalies
+            for column in columns_to_use:
+                combined_anomalies = trend_anomalies | multivariate_anomalies
+                anomalies[column] = X.loc[combined_anomalies, [column]]
+                print(f"Combined anomalies for {column}: {combined_anomalies.sum()}")
+            
+        except Exception as e:
+            print(f"Error detecting anomalies: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+        return anomalies, common_anomalies
+
+
     def create_anomalies_tab(self):
-        anomalies_tab = QWidget()
-        anomalies_layout = QVBoxLayout(anomalies_tab)
+        try:
+            anomalies_tab = QWidget()
+            anomalies_layout = QVBoxLayout(anomalies_tab)
 
-        self.anomalies_table = QTableWidget()
-        self.anomalies_layout.addWidget(self.anomalies_table)
+            self.file_selector = QComboBox()
+            self.file_selector.currentIndexChanged.connect(self.load_anomalies_data)
+            anomalies_layout.addWidget(self.file_selector)
 
-        self.anomalies_plot = PlotWidget()
-        self.anomalies_layout.addWidget(self.anomalies_plot)
+            self.anomalies_table = QTableWidget()
+            anomalies_layout.addWidget(self.anomalies_table)
 
-        self.tab_widget.addTab(anomalies_tab, "Anomalies")
+            self.anomalies_plot = PlotWidget()
+            anomalies_layout.addWidget(self.anomalies_plot)
+
+            self.tab_widget.addTab(anomalies_tab, "Time Series Analysis")
+            
+            # Create a new tab for common anomalies
+            common_anomalies_tab = QWidget()
+            common_anomalies_layout = QVBoxLayout(common_anomalies_tab)
+            self.common_anomalies_table = QTableWidget()
+            common_anomalies_layout.addWidget(self.common_anomalies_table)
+            self.tab_widget.addTab(common_anomalies_tab, "Common Anomalies")
+
+            # Populate the tab with data
+            self.populate_anomalies_tab()
+            
+            print("Anomalies tab created successfully")
+        except Exception as e:
+            print(f"Error creating anomalies tab: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+    def load_anomalies_data(self, index):
+        column = self.file_selector.itemText(index)
+        self.update_anomalies_display(column)
 
     def populate_anomalies_tab(self):
-        # Populate the anomalies table
-        for file_name, table_data in self.data['tables'].items():
-            if file_name.startswith('Anomalies_ARIMA_'):
-                self.populate_anomalies_table(file_name, table_data)
-                self.plot_anomalies(file_name, table_data)
-                break  # Assuming we're only showing one file's anomalies at a time
+        try:
+            self.file_selector.clear()
+            self.anomalies, self.common_anomalies = self.detect_anomalies(self.og_df)
 
-    def populate_anomalies_table(self, file_name, table_data):
-        self.anomalies_table.setColumnCount(len(table_data['columns']))
-        self.anomalies_table.setHorizontalHeaderLabels(table_data['columns'])
-        self.anomalies_table.setRowCount(len(table_data['data']))
+            if self.og_df is None:
+                print("Error: Original DataFrame not found")
+                return
 
-        for row, row_data in enumerate(table_data['data']):
-            for col, value in enumerate(row_data):
-                self.anomalies_table.setItem(row, col, QTableWidgetItem(str(value)))
+            print(f"Shape of original dataframe: {self.og_df.shape}")
+            print(f"Columns in original dataframe: {self.og_df.columns}")
 
-    def plot_anomalies(self, file_name, table_data):
-        # Assuming 'Time' and 'HST_output_RPM' are columns in your data
-        time = [row[table_data['columns'].index('Time')] for row in table_data['data']]
-        rpm = [row[table_data['columns'].index('HST_output_RPM')] for row in table_data['data']]
+            for column in self.og_df.columns:
+                if pd.api.types.is_numeric_dtype(self.og_df[column]):
+                    self.file_selector.addItem(column)
 
+            if self.file_selector.count() > 0:
+                self.update_anomalies_display(0)
+
+            # Populate common anomalies table
+            if not self.common_anomalies.empty:
+                self.common_anomalies_table.setColumnCount(len(self.common_anomalies.columns))
+                self.common_anomalies_table.setHorizontalHeaderLabels(self.common_anomalies.columns)
+                self.common_anomalies_table.setRowCount(len(self.common_anomalies))
+
+                for i, (idx, row) in enumerate(self.common_anomalies.iterrows()):
+                    for j, value in enumerate(row):
+                        self.common_anomalies_table.setItem(i, j, QTableWidgetItem(str(value)))
+            else:
+                print("No common anomalies detected")
+                self.common_anomalies_table.setColumnCount(1)
+                self.common_anomalies_table.setHorizontalHeaderLabels(["Message"])
+                self.common_anomalies_table.setRowCount(1)
+                self.common_anomalies_table.setItem(0, 0, QTableWidgetItem("No common anomalies detected"))
+
+            print(f"Populated anomalies tabs with {self.file_selector.count()} columns and {len(self.common_anomalies)} common anomalies")
+        except Exception as e:
+            print(f"Error populating anomalies tabs: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def plot_anomalies(self, column, anomalies, common_anomalies):
         self.anomalies_plot.clear()
-        self.anomalies_plot.plot(time, rpm, pen='b', symbol='o', symbolPen='b', symbolBrush='b', symbolSize=5)
-        self.anomalies_plot.setLabel('left', 'HST Output RPM')
-        self.anomalies_plot.setLabel('bottom', 'Time')
-        self.anomalies_plot.setTitle(f'ARIMA Anomalies - {file_name}')
+        
+        if self.og_df is None or self.og_df.empty:
+            print(f"Error: Original DataFrame not found or empty for plotting column {column}")
+            return
 
+        try:
+            x = self.og_df.index
+            y = self.og_df[column]
+            self.anomalies_plot.plot(x, y, pen='b', name='Data')
+            
+            if column in anomalies and not anomalies[column].empty:
+                anomaly_x = anomalies[column].index
+                anomaly_y = anomalies[column][column].values
+                print(f"Plotting {len(anomaly_y)} parameter anomalies for {column}")
+                self.anomalies_plot.plot(anomaly_x, anomaly_y, pen=None, symbol='o', 
+                                        symbolPen='y', symbolBrush='y', symbolSize=5, name='Parameter Anomalies')
+            else:
+                print(f"No parameter anomalies to plot for {column}")
+
+            if not common_anomalies.empty and column in common_anomalies.columns:
+                common_anomaly_x = common_anomalies.index
+                common_anomaly_y = common_anomalies[column].values
+                print(f"Plotting {len(common_anomaly_y)} common anomalies for {column}")
+                self.anomalies_plot.plot(common_anomaly_x, common_anomaly_y, pen=None, symbol='o', 
+                                        symbolPen='r', symbolBrush='r', symbolSize=7, name='Common Anomalies')
+            else:
+                print(f"No common anomalies to plot for {column}")
+
+            self.anomalies_plot.setLabel('left', column)
+            self.anomalies_plot.setLabel('bottom', 'Index')
+            self.anomalies_plot.setTitle(f'Anomalies - {column}')
+            self.anomalies_plot.addLegend()
+            
+        except Exception as e:
+            print(f"Error in plot_anomalies for column {column}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def update_anomalies_display(self, index_or_column):
+        try:
+            if isinstance(index_or_column, int):
+                column = self.file_selector.itemText(index_or_column)
+            else:
+                column = index_or_column
+            
+            anomalies = self.anomalies.get(column, pd.DataFrame())
+
+            print(f"Updating display for column: {column}")
+            print(f"Shape of anomalies for {column}: {anomalies.shape}")
+            print(f"Number of anomalies for {column}: {len(anomalies)}")
+
+            self.anomalies_table.clear()
+            self.anomalies_table.setColumnCount(2)
+            self.anomalies_table.setHorizontalHeaderLabels(['Index', column])
+            
+            print(f"Anomalies dictionary keys: {self.anomalies.keys()}")
+            print(f"Anomalies for {column}:\n{anomalies}")
+
+            if anomalies.empty:
+                self.anomalies_table.setRowCount(1)
+                self.anomalies_table.setItem(0, 0, QTableWidgetItem("No anomalies detected"))
+                self.anomalies_table.setItem(0, 1, QTableWidgetItem(""))
+            else:
+                self.anomalies_table.setRowCount(len(anomalies))
+                for row, (idx, value) in enumerate(anomalies[column].items()):
+                    self.anomalies_table.setItem(row, 0, QTableWidgetItem(str(idx)))
+                    self.anomalies_table.setItem(row, 1, QTableWidgetItem(str(value)))
+
+            self.plot_anomalies(column, self.anomalies, self.common_anomalies)
+            print(f"Updated anomalies display for column: {column}")
+        except Exception as e:
+            print(f"Error updating anomalies display: {str(e)}")
+            import traceback
+            traceback.print_exc()
             
     def create_script_results_tabs(self):
     # Create tabs for tables

@@ -59,6 +59,8 @@ class ScriptUploadWindow(QMainWindow):
         self.data = data
         self.script_path = script_path
         self.tdms_file_count = tdms_file_count
+        self.tdms_file_path = folder_path 
+
         self.parameters = {}  # Initialize an empty dictionary for parameters
         self.setWindowTitle("Script Upload Indicator")
         self.setGeometry(100, 100, 1050, 750)
@@ -127,9 +129,10 @@ class ScriptUploadWindow(QMainWindow):
         #self.display_window = DisplayWindow(self.parameters, self.folder_path, previous_window=self)
         if self.selected_option == "PC RR":
             self.display_window = DisplayPCRRWindow(self.folder_path)
+        elif self.selected_option == "PC Speed Sweep":
+            self.display_window = DisplayPCSSWindow(self.folder_path)  
         else:
             self.display_window = DisplayWindow(self.folder_path)
-        
         
         self.display_window.show()
     
@@ -139,10 +142,15 @@ class ScriptUploadWindow(QMainWindow):
         os.makedirs(output_path, exist_ok=True)
 
         # Determine which script to run
-        if hasattr(self, 'selected_option') and self.selected_option == "PC RR":
-            script_path = os.path.join(os.path.dirname(__file__), "pcr_rr_new.py")
+        if hasattr(self, 'selected_option'):
+            if self.selected_option == "PC RR":
+                script_path = os.path.join(os.path.dirname(__file__), "pcr_rr_new.py")
+            elif self.selected_option == "PC Speed Sweep":
+                script_path = os.path.join(os.path.dirname(__file__), "pc_ss.py")
+            else:
+                script_path = os.path.join(os.path.dirname(__file__), "piston_group.py")
         else:
-            script_path = os.path.join(os.path.dirname(__file__), "piston_group.py")  # Use the default script path (piston_group.py)
+            script_path = os.path.join(os.path.dirname(__file__), "piston_group.py") # Use the default script path (piston_group.py)
 
         command = [sys.executable, script_path, self.folder_path, output_path]
         logger.info(f"Executing command: {' '.join(command)}")
@@ -177,6 +185,33 @@ class ScriptUploadWindow(QMainWindow):
                     error_message += f"\nStderr: {stderr}"
             logger.error(error_message)
             self.on_error_occurred(error_message)
+            
+        if self.selected_option == "PC Speed Sweep":
+            self.display_window = DisplayPCSSWindow(
+                self.folder_path,
+                self.parameters,
+                self.tdms_file_path,
+                self,
+                self.tdms_file_count
+            )
+        elif self.selected_option == "PC RR" : 
+             self.display_window = DisplayPCRRWindow(
+                self.folder_path,
+                self.parameters,
+                self.tdms_file_path,
+                self,
+                self.tdms_file_count
+            )
+        else:
+            self.display_window = DisplayWindow(
+                self.parameters,
+                self.folder_path,
+                self.tdms_file_path,
+                self,
+                self.tdms_file_count
+            )
+        self.display_window.show()
+        self.close()
 
     def on_ready_read_standard_output(self):
         output = self.process.readAllStandardOutput().data().decode()

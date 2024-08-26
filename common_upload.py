@@ -36,7 +36,12 @@ class CommonScriptUploadWindow(QMainWindow):
                 script_path = "ndb_test_new.py"
             self.script_window = NDBScriptUploadWindow(data=None, tdms_folder_path=folder_path, script_path=script_path)
         else:
-            script_path = r"piston_group.py"  # Replace with actual script path for other options
+            if option == "PC RR":
+                script_path = r"pcr_rr_new.py"
+            elif option == "PC Speed Sweep":
+                script_path = r"pc_ss.py"  # Add this new condition
+            else:
+                script_path = r"piston_group.py"
             self.script_window = EfficiencyScriptUploadWindow(folder_path, script_path, previous_window=self)
 
         self.setCentralWidget(self.script_window)

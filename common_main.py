@@ -123,6 +123,8 @@ class MainApplication:
     def show_script_upload_window(self, option, folder_path):
         if option == "PC RR":
             script_path = "pcr_rr_new.py"
+        elif option == "PC Speed Sweep":
+            script_path = "pc_ss.py"
         elif option == "Full Efficiency":
             script_path = "hst_eff_new.py"
         else:
@@ -136,6 +138,8 @@ class MainApplication:
     def show_display_window(self, folder_path, selected_option):
         if selected_option == "PC RR":
             self.display_window = DisplayPCRRWindow(folder_path)
+        elif selected_option == "PC Speed Sweep":
+            self.display_window = DisplayPCSSWindow(folder_path)  
         elif selected_option == "Full Efficiency":
             self.display_window = DisplayHSTEffWindow(folder_path)
         else:

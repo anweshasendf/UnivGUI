@@ -8,6 +8,8 @@ from nptdms import TdmsFile
 import matplotlib.pyplot as plt
 from multiprocessing import Pool, cpu_count
 import logging 
+import pickle
+
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 def clean_column_names(df):
@@ -282,6 +284,9 @@ def main(folder_path):
         return
 
     print(json.dumps(all_results))
+    
+    with open('processed_df.pkl', 'wb') as f:
+        pickle.dump(df, f)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
